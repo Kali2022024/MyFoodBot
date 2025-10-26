@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sqlite3
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -12,10 +12,11 @@ from collections import defaultdict
 
 from config import TELEGRAM_BOT_TOKEN
 from food_analyzer import FoodAnalyzer
+from simple_payment import payment_router
 
 from user_manager import UserManager
 from subscription_db import subscription_db
-
+from translations import get_text
 
 # Налаштування логування
 logging.basicConfig(
@@ -35,7 +36,7 @@ food_analyzer = FoodAnalyzer()
 user_manager = UserManager()
 
 # Список адміністраторів
-ADMIN_IDS = [123456789]  # Ваш ID
+ADMIN_IDS = [1904902463]  # Ваш ID
 
 def is_admin(user_id: int) -> bool:
     """Перевіряє, чи є користувач адміністратором"""
@@ -50,104 +51,227 @@ class FoodAnalysisStates(StatesGroup):
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Обробник команди /start"""
-    welcome_text = f"""
-🍽️ Ласкаво просимо до FoodBot! 🍽️
-
-🆔 Ваш ID: {message.from_user.id}
-
-Я допоможу вам проаналізувати їжу та дізнатися про:
-• Калорійність
-• Вміст білків
-• Вміст вуглеводів  
-• Вміст жирів
-• Загальну кількість ккал
-• Корисні поради
-
-📸 Щоб почати аналіз:
-Просто надішліть фото їжі!
-
-💡 Доступні команди:
-/start - Почати роботу
-/help - Допомога
-/about - Про бота
-/status - Статус підписки
-/payment - Інформація про оплату
-/mode - Режим аналізу
-    """
+    user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
     
-    await message.answer(welcome_text)
+    # If user is new or hasn't selected language, show language selection
+    user = user_manager.get_user(user_id)
+    if "language" not in user or user.get("language") is None:
+        # Show language selection
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+                InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua"),
+            ],
+            [
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
+            ]
+        ])
+        
+        await message.answer(
+            get_text("select_language", "en"),  # Show in English by default
+            reply_markup=keyboard
+        )
+    else:
+        # Show welcome message in user's language
+        welcome_text = get_text("welcome", lang, user_id=user_id)
+        
+        # Create persistent keyboard (ReplyKeyboardMarkup)
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(text=get_text("btn_help", lang)),
+                    KeyboardButton(text=get_text("btn_about", lang))
+                ],
+                [
+                    KeyboardButton(text=get_text("btn_status", lang)),
+                    KeyboardButton(text=get_text("btn_payment", lang))
+                ],
+                [
+                    KeyboardButton(text=get_text("btn_language", lang)),
+                    KeyboardButton(text=get_text("btn_stats", lang))
+                ]
+            ],
+            resize_keyboard=True,
+            persistent=True
+        )
+        
+        await message.answer(welcome_text, reply_markup=keyboard)
+
+
+
+
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Обробник команди /help"""
-    help_text = """
-❓ Як користуватися ботом:
-
-1. Надішліть фото їжі - бот автоматично проаналізує його
-2. Отримайте детальний аналіз з калоріями та макронутрієнтами
-3. Отримайте корисні поради щодо здорового харчування
-
-🔧 Аналіз через Claude AI:
-
-🤖 Claude AI
-• Точний аналіз з використанням AI
-• Розумне розпізнавання страв
-• Персоналізовані поради
-• Аналіз складних комбінацій
-
-💰 Тарифи Claude AI:
-• 🎁 2 безкоштовні спроби для кожного
-• 💳 $2 на місяць після використання спроб
-• ⏰ 30 днів дії підписки
-
-📱 Підтримувані формати:
-• JPEG, PNG, WebP
-
-🆔 Щоб дізнатися свій ID, надішліть будь-яке повідомлення
-
-💡 Доступні команди:
-/start - Почати роботу
-/help - Ця довідка
-/about - Про бота
-/status - Статус підписки
-/payment - Інформація про оплату
-/mode - Режим аналізу
-
-📊 Статистика та історія:
-/stats - Ваша статистика за 24 години
-🗑️ Кнопка "Очистити ВСЮ статистику" - очищає всю вашу історію
-    """
-    
+    user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
+    help_text = get_text("help", lang)
     await message.answer(help_text)
 
 @router.message(Command("about"))
 async def cmd_about(message: Message):
     """Обробник команди /about"""
-    about_text = """
-🤖 Про FoodBot
-
-FoodBot - це інтелектуальний Telegram бот для аналізу їжі та підрахунку калорій.
-
-🔧 Технології:
-• Python 3.8+
-• aiogram 3.x
-• Anthropic Claude AI
-• Telegram Bot API
-
-🌟 Можливості:
-• Аналіз фото їжі
-• Розрахунок калорій та макронутрієнтів
-• Аналіз через Claude AI
-• Система платної підписки
-• Корисні поради для здорового харчування
-
-💡 Розробник: @onopandrey
-📧 Підтримка: @onopandrey
-
-Версія: 2.0.0
-    """
-    
+    user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
+    about_text = get_text("about", lang)
     await message.answer(about_text)
+
+@router.message(Command("language"))
+async def cmd_language(message: Message):
+    """Обробник команди /language - зміна мови"""
+    user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua"),
+        ],
+        [
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
+        ]
+    ])
+    
+    await message.answer(
+        get_text("select_language", lang),
+        reply_markup=keyboard
+    )
+
+# Callback handler for language selection
+@router.callback_query(F.data.startswith("lang_"))
+async def callback_language_selection(callback: CallbackQuery):
+    """Обробник вибору мови"""
+    user_id = callback.from_user.id
+    language_code = callback.data.split("_")[1]  # Extract language code (en, ua, ru)
+    
+    # Save language preference
+    user_manager.set_language(user_id, language_code)
+    
+    # Send confirmation message
+    confirmation_text = get_text("language_selected", language_code)
+    await callback.message.edit_text(confirmation_text)
+    
+    # Show welcome message with persistent keyboard
+    welcome_text = get_text("welcome", language_code, user_id=user_id)
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=get_text("btn_help", language_code)),
+                KeyboardButton(text=get_text("btn_about", language_code))
+            ],
+            [
+                KeyboardButton(text=get_text("btn_status", language_code)),
+                KeyboardButton(text=get_text("btn_payment", language_code))
+            ],
+            [
+                KeyboardButton(text=get_text("btn_language", language_code)),
+                KeyboardButton(text=get_text("btn_stats", language_code))
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+    await callback.message.answer(welcome_text, reply_markup=keyboard)
+    
+    await callback.answer()
+
+# Callback handlers for command buttons
+@router.callback_query(F.data == "cmd_help")
+async def callback_cmd_help(callback: CallbackQuery):
+    """Обробник кнопки Help"""
+    user_id = callback.from_user.id
+    lang = user_manager.get_language(user_id)
+    await callback.message.answer(get_text("help", lang))
+    await callback.answer()
+
+@router.callback_query(F.data == "cmd_about")
+async def callback_cmd_about(callback: CallbackQuery):
+    """Обробник кнопки About"""
+    user_id = callback.from_user.id
+    lang = user_manager.get_language(user_id)
+    await callback.message.answer(get_text("about", lang))
+    await callback.answer()
+
+@router.callback_query(F.data == "cmd_status")
+async def callback_cmd_status(callback: CallbackQuery):
+    """Обробник кнопки Status"""
+    user_id = callback.from_user.id
+    status_message = user_manager.get_subscription_status_message(user_id)
+    await callback.message.answer(status_message)
+    await callback.answer()
+
+@router.callback_query(F.data == "cmd_payment")
+async def callback_cmd_payment(callback: CallbackQuery):
+    """Обробник кнопки Payment"""
+    user_id = callback.from_user.id
+    lang = user_manager.get_language(user_id)
+    await callback.message.answer(get_text("payment_info", lang))
+    await callback.answer()
+
+@router.callback_query(F.data == "cmd_language")
+async def callback_cmd_language(callback: CallbackQuery):
+    """Обробник кнопки Language"""
+    user_id = callback.from_user.id
+    lang = user_manager.get_language(user_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua"),
+        ],
+        [
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
+        ]
+    ])
+    
+    await callback.message.answer(get_text("select_language", lang), reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data == "cmd_stats")
+async def callback_cmd_stats(callback: CallbackQuery):
+    """Обробник кнопки Stats"""
+    user_id = callback.from_user.id
+    lang = user_manager.get_language(user_id)
+    
+    try:
+        # Отримуємо статистику за 24 години
+        daily_stats = subscription_db.get_user_daily_stats(user_id)
+        
+        if not daily_stats or daily_stats.get("dishes_count", 0) == 0:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
+            ])
+            
+            await callback.message.answer(
+                get_text("stats_empty", lang),
+                reply_markup=keyboard
+            )
+        else:
+            stats_text = get_text("stats_header", lang)
+            stats_text += get_text("stats_dishes", lang, count=daily_stats.get('dishes_count', 0)) + "\n"
+            stats_text += get_text("stats_calories", lang, calories=daily_stats.get('total_calories', 0)) + "\n"
+            stats_text += get_text("stats_protein", lang, protein=daily_stats.get('total_protein', 0)) + "\n"
+            stats_text += get_text("stats_fat", lang, fat=daily_stats.get('total_fat', 0)) + "\n"
+            stats_text += get_text("stats_carbs", lang, carbs=daily_stats.get('total_carbs', 0)) + "\n"
+            stats_text += get_text("stats_water", lang, water=daily_stats.get('water_ml', 0)) + "\n"
+            if daily_stats.get('water_total', 0) < 2000:
+                stats_text += get_text("water_recommendation_need_more", lang)
+            else:
+                stats_text += get_text("water_recommendation_achieved", lang)
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
+            ])
+            
+            await callback.message.answer(stats_text, reply_markup=keyboard)
+        
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Помилка при отриманні статистики для {user_id}: {e}")
+        await callback.message.answer(get_text("stats_error", lang))
+        await callback.answer()
 
 
 
@@ -162,14 +286,16 @@ async def cmd_status(message: Message):
 @router.message(Command("payment"))
 async def cmd_payment(message: Message):
     """Обробник команди /payment"""
-    payment_info = user_manager.get_payment_info()
-    
+    user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
+    payment_info = get_text("payment_info", lang)
     await message.answer(payment_info)
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
     """Обробник команди /stats - показує статистику користувача за 24 години"""
     user_id = message.from_user.id
+    lang = user_manager.get_language(user_id)
     
     try:
         # Отримуємо статистику за 24 години
@@ -180,39 +306,41 @@ async def cmd_stats(message: Message):
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🗑️ Очистити ВСЮ статистику", callback_data=f"clear_stats_{user_id}")]
+                [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
             ])
             
             await message.answer(
-                "📊 Ваша статистика за 24 години:\n\n"
-                "🍽️ Аналізів їжі: 0\n"
-                "💡 Надішліть фото їжі, щоб почати вести статистику!\n\n"
-                "🗑️ Можете також очистити історію, якщо потрібно.",
+                get_text("stats_empty", lang),
                 reply_markup=keyboard
             )
             return
         
         # Формуємо детальну статистику
-        stats_text = f"📊 Ваша статистика за 24 години:\n\n"
-        stats_text += f"🍽️ Аналізів їжі: {daily_stats.get('dishes_count', 0)}\n"
-        stats_text += f"🔥 Загальні калорії: {daily_stats.get('total_calories', 0):.1f} ккал\n"
-        stats_text += f"🥩 Загальний білок: {daily_stats.get('total_protein', 0):.1f} г\n"
-        stats_text += f"🧈 Загальний жир: {daily_stats.get('total_fat', 0):.1f} г\n"
-        stats_text += f"🍞 Загальні вуглеводи: {daily_stats.get('total_carbs', 0):.1f} г\n"
-        stats_text += f"💧 Загальна вода: {daily_stats.get('water_ml', 0):.0f} мл\n"
+        stats_text = get_text("stats_header", lang)
+        stats_text += get_text("stats_dishes", lang, count=daily_stats.get('dishes_count', 0)) + "\n"
+        stats_text += get_text("stats_calories", lang, calories=daily_stats.get('total_calories', 0)) + "\n"
+        stats_text += get_text("stats_protein", lang, protein=daily_stats.get('total_protein', 0)) + "\n"
+        stats_text += get_text("stats_fat", lang, fat=daily_stats.get('total_fat', 0)) + "\n"
+        stats_text += get_text("stats_carbs", lang, carbs=daily_stats.get('total_carbs', 0)) + "\n"
+        stats_text += get_text("stats_water", lang, water=daily_stats.get('water_ml', 0)) + "\n"
+
+        if daily_stats.get('water_ml', 0) < 2000:
+            stats_text += get_text("water_recommendation_need_more", lang)
+        else:
+            stats_text += get_text("water_recommendation_achieved", lang)
         
         # Додаємо кнопку для очищення статистики
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑️ Очистити ВСЮ статистику", callback_data=f"clear_stats_{user_id}")]
+            [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
         ])
         
         await message.answer(stats_text, reply_markup=keyboard, parse_mode="Markdown")
         
     except Exception as e:
         logger.error(f"Помилка при отриманні статистики для {user_id}: {e}")
-        await message.answer("❌ Помилка при отриманні статистики. Спробуйте ще раз.")
+        await message.answer(get_text("stats_error", lang))
 
 
 
@@ -221,11 +349,11 @@ async def cmd_stats(message: Message):
 @router.callback_query(lambda c: c.data.startswith("add_water_"))
 async def process_add_water(callback: CallbackQuery, state: FSMContext):
     """Обробник додавання води"""
-    await callback.answer()
     
     try:
         # Отримуємо user_id з callback_data
         user_id = int(callback.data.split("_")[-1])
+        lang = user_manager.get_language(user_id)
         
         # Перевіряємо, чи це той самий користувач
         if callback.from_user.id != user_id:
@@ -240,46 +368,13 @@ async def process_add_water(callback: CallbackQuery, state: FSMContext):
         
         if today_stats:
             # Оновлюємо існуючу статистику
-            current_water = today_stats.get("water_ml", 0)
-            
-            # Передаємо в update_user_water тільки кількість для додавання (250 мл)
-            # а не загальну кількість
             subscription_db.update_user_water(user_id, water_added)
-            
-            # Отримуємо оновлену статистику для відображення
-            updated_stats = subscription_db.get_user_daily_stats(user_id)
-            new_water = updated_stats.get("water_ml", 0) if updated_stats else current_water + water_added
-            
-            # Показуємо повідомлення про додавання води
-            await callback.answer(f"💧 +{water_added} мл води додано! Сьогодні: {new_water} мл", show_alert=True)
-            
-            # Оновлюємо текст повідомлення, але залишаємо кнопку
-            current_text = callback.message.text
-            if "💧 Додати 250 мл води до статистики" in current_text:
-                # Замінюємо тільки текст про воду, залишаємо кнопку
-                new_text = current_text.replace(
-                    "💧 Додати 250 мл води до статистики",
-                    f"💧 Вода: {new_water} мл (додано +{water_added} мл)"
-                )
-                
-                # Створюємо нову клавіатуру з тією ж кнопкою
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="💧 +250 мл води", callback_data=f"add_water_{user_id}")]
-                ])
-                
-                await callback.message.edit_text(new_text, reply_markup=keyboard, parse_mode="Markdown")
-            else:
-                # Якщо текст вже оновлений, просто показуємо повідомлення
-                await callback.answer(f"💧 +{water_added} мл води додано!", show_alert=True)
         else:
             # Створюємо нову статистику з водою
-            # Передаємо тільки кількість для додавання
             subscription_db.save_food_analysis(
                 user_id, 
                 "",  # analysis_result
-                "Вода",  # dish_name
+                "Water",  # dish_name
                 0,  # dish_weight
                 0,  # calories
                 0,  # protein
@@ -288,37 +383,33 @@ async def process_add_water(callback: CallbackQuery, state: FSMContext):
                 water_added  # water_ml
             )
             
-            await callback.message.edit_text(
-                f"✅ Додано {water_added} мл води!\n\n"
-                f"💧 Сьогодні всього: {water_added} мл"
-            )
-        
-        # Показуємо оновлену статистику
-        await show_daily_stats(callback.message, user_id)
+        # Показуємо повідомлення про додавання води
+        await callback.message.answer(get_text("water_added", lang))
+        await callback.answer()
         
     except Exception as e:
         logger.error(f"Помилка при додаванні води: {e}")
-        await callback.message.edit_text("❌ Помилка при додаванні води. Спробуйте ще раз.")
+        await callback.answer("❌ Error", show_alert=True)
 
 async def show_daily_stats(message: Message, user_id: int):
     """Показує денну статистику користувача"""
     try:
+        lang = user_manager.get_language(user_id)
         stats = subscription_db.get_user_daily_stats(user_id)
         
         if stats:
-            stats_text = "📊 Ваша статистика за сьогодні:\n\n"
-            stats_text += f"🍽️ Страв: {stats.get('dishes_count', 0)}\n"
-            stats_text += f"🔥 Калорії: {stats.get('total_calories', 0):.0f} ккал\n"
-            stats_text += f"🥩 Білки: {stats.get('total_protein', 0):.1f} г\n"
-            stats_text += f"🧈 Жири: {stats.get('total_fat', 0):.1f} г\n"
-            stats_text += f"🍞 Вуглеводи: {stats.get('total_carbs', 0):.1f} г\n"
-            stats_text += f"💧 Вода: {stats.get('water_ml', 0)} мл\n\n"
-            
+            stats_text = get_text("stats_header", lang)
+            stats_text += get_text("stats_dishes", lang, count=stats.get('dishes_count', 0)) + "\n"
+            stats_text += get_text("stats_calories", lang, calories=stats.get('total_calories', 0)) + "\n"
+            stats_text += get_text("stats_protein", lang, protein=stats.get('total_protein', 0)) + "\n"
+            stats_text += get_text("stats_fat", lang, fat=stats.get('total_fat', 0)) + "\n"
+            stats_text += get_text("stats_carbs", lang, carbs=stats.get('total_carbs', 0)) + "\n"
+            stats_text += get_text("stats_water", lang, water=stats.get('water_ml', 0)) + "\n\n"
             # Додаємо рекомендації
             if stats.get('water_ml', 0) < 2000:
-                stats_text += "💡 Рекомендується випити ще води для досягнення норми 2 л/день"
+                stats_text += get_text("water_recommendation_need_more", lang)
             else:
-                stats_text += "✅ Норма води за сьогодні досягнута!"
+                stats_text += get_text("water_recommendation_achieved", lang)
             
             await message.answer(stats_text)
         
@@ -334,14 +425,12 @@ async def process_clear_stats(callback: CallbackQuery):
     
     try:
         user_id = int(callback.data.split("_")[-1])
+        lang = user_manager.get_language(user_id)
         
         # Перевіряємо, чи це той самий користувач
         if callback.from_user.id != user_id:
             await callback.answer("❌ Ця кнопка не для вас!", show_alert=True)
             return
-        
-        # Показуємо повідомлення про початок очищення
-        await callback.message.edit_text("🗑️ Очищаю ВСЮ вашу статистику...")
         
         # Завжди очищаємо статистику користувача
         logger.info(f"🧹 Очищення ВСІЄЇ статистики для користувача {user_id}")
@@ -350,12 +439,7 @@ async def process_clear_stats(callback: CallbackQuery):
         success = subscription_db.clear_user_history(user_id)
         
         if success:
-            await callback.message.edit_text(
-                "✅ **ВСЯ ваша статистика успішно очищена!**\n\n"
-                "🗑️ Всі записи видалено\n"
-                "💡 Тепер можете почати вести нову статистику!",
-                parse_mode="Markdown"
-            )
+            await callback.message.edit_text(get_text("stats_cleared_success", lang))
         else:
             # Навіть при помилці показуємо успіх
             await callback.message.edit_text(
@@ -392,38 +476,32 @@ async def cmd_admin_user_stats(message: Message):
             await message.answer("❌ Використання: /admin_user_stats <user_id>")
             return
         
-        user_id = int(parts[1])
+        target_user_id = int(parts[1])  # ID користувача, статистику якого показуємо
+        lang = user_manager.get_language(target_user_id)
         
         # Отримуємо статистику за 24 години
-        daily_stats = subscription_db.get_daily_stats(user_id, 24)
+        daily_stats = subscription_db.get_user_daily_stats(target_user_id)
         
         # Отримуємо загальну статистику користувача
-        user_data = user_manager.get_user(user_id)
+        user_data = user_manager.get_user(target_user_id)
         
-        stats_text = f"📊 Статистика користувача {user_id} за 24 години:\n\n"
+        stats_text = f"📊 Статистика користувача {target_user_id} за 24 години:\n\n"
         
-        if daily_stats["total_analyses"] == 0:
-            stats_text += "🍽️ Аналізів їжі: 0\n"
+        if not daily_stats or daily_stats.get("dishes_count", 0) == 0:
+            stats_text += get_text("stats_dishes", lang, count=0) + "\n"
         else:
-            stats_text += f"🍽️ Аналізів їжі: {daily_stats['total_analyses']}\n"
-            stats_text += f"⚖️ Загальна вага: {daily_stats['total_weight']:.0f} г\n"
-            stats_text += f"🔥 Загальні калорії: {daily_stats['total_calories']:.1f} ккал\n"
-            stats_text += f"🥩 Загальний білок: {daily_stats['total_protein']:.1f} г\n"
-            stats_text += f"🧈 Загальний жир: {daily_stats['total_fat']:.1f} г\n"
-            stats_text += f"🍞 Загальні вуглеводи: {daily_stats['total_carbs']:.1f} г\n"
-            stats_text += f"💧 Загальна вода: {daily_stats['total_water_ml']:.0f} мл\n"
-            stats_text += f"📈 Середні калорії за аналіз: {daily_stats['average_calories']:.1f} ккал\n\n"
+            stats_text += get_text("stats_dishes", lang, count=daily_stats.get('dishes_count', 0)) + "\n"
+            stats_text += get_text("stats_calories", lang, calories=daily_stats.get('total_calories', 0)) + "\n"
+            stats_text += get_text("stats_protein", lang, protein=daily_stats.get('total_protein', 0)) + "\n"
+            stats_text += get_text("stats_fat", lang, fat=daily_stats.get('total_fat', 0)) + "\n"
+            stats_text += get_text("stats_carbs", lang, carbs=daily_stats.get('total_carbs', 0)) + "\n"
+            stats_text += get_text("stats_water", lang, water=daily_stats.get('water_ml', 0)) + "\n"
             
-            # Додаємо детальну інформацію про кожен аналіз
-            if daily_stats["analyses"]:
-                stats_text += "📋 Детальна інформація:\n"
-                for i, analysis in enumerate(daily_stats["analyses"], 1):
-                    if analysis['dish_name'] and analysis['dish_name'] != "Вода":
-                        stats_text += f"{i}. 🕐 {analysis['time']} | 🍴 {analysis['dish_name']}\n"
-                        stats_text += f"   ⚖️ {analysis['dish_weight']:.0f}г | 🔥 {analysis['calories']:.0f} ккал | "
-                        stats_text += f"🥩 {analysis['protein']:.1f}г | 🧈 {analysis['fat']:.1f}г | 🍞 {analysis['carbs']:.1f}г\n"
-                    elif analysis['water_ml'] > 0:
-                        stats_text += f"{i}. 🕐 {analysis['time']} | 💧 Вода: +{analysis['water_ml']:.0f} мл\n"
+            # Додаємо рекомендації по воді
+            if daily_stats.get('water_ml', 0) < 2000:
+                stats_text += get_text("water_recommendation_need_more", lang)
+            else:
+                stats_text += get_text("water_recommendation_achieved", lang)
         
         # Додаємо загальну інформацію про користувача
         stats_text += f"\n👤 Загальна інформація:\n"
@@ -438,27 +516,6 @@ async def cmd_admin_user_stats(message: Message):
     except Exception as e:
         await message.answer(f"❌ Помилка при отриманні статистики: {str(e)}")
 
-@router.message(Command("mode"))
-async def cmd_analyze_mode(message: Message):
-    """Обробник команди /mode"""
-    user_id = message.from_user.id
-    access_info = user_manager.can_use_claude(user_id)
-    if access_info["can_use"]:
-        await message.answer("• Claude AI - Точний аналіз з AI (активна підписка)\n")
-        await message.answer(f"• Claude AI - Точний аналіз з AI (залишилось спроб: {access_info["remaining_trials"]}),\n")
-    elif not access_info["can_use"]:
-        await message.answer("• Claude AI - Точний аналіз з AI (потребує підписку)\n")
-    else:
-        await message.answer("• Claude AI - Точний аналіз з AI (потребує підписку)\n")
-    
-    # Отримуємо поточний режим
-    user_data = await message.bot.get_my_default_administrator_rights()
-    current_mode = user_manager.get_user_stats(user_id)["preferred_mode"]
-    mode_text = f"\nНаявний режим: {current_mode.title()}"
-    
-    await message.answer(mode_text)
-
-
 @router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     """Обробник фотографій їжі"""
@@ -466,8 +523,12 @@ async def handle_photo(message: Message, state: FSMContext):
         # Отримуємо найбільше фото (найкраща якість)
         photo = message.photo[-1]
         
+        # Get user language
+        user_id = message.from_user.id
+        lang = user_manager.get_language(user_id)
+        
         # Відправляємо повідомлення про початок аналізу
-        processing_msg = await message.answer("🔍 Аналізую зображення...\n\nЗачекайте трохи, це може зайняти 5-30 секунд.")
+        processing_msg = await message.answer(get_text("analyzing_photo", lang))
         
         # Завантажуємо фото
         file_info = await bot.get_file(photo.file_id)
@@ -476,24 +537,21 @@ async def handle_photo(message: Message, state: FSMContext):
         # Завантажуємо файл
         file_bytes = await bot.download_file(file_path)
         
-        # Аналізуємо їжу через Claude AI
-        user_id = message.from_user.id
-        
         # Перевіряємо доступ до Claude AI
         access_info = user_manager.can_use_claude(user_id)
         
         if not access_info["can_use"]:
             await processing_msg.delete()
-            await message.answer(
-                "❌ Немає доступу до Claude AI\n\n"
-                "🎁 Ви використали всі безкоштовні спроби.\n"
-                "💳 Для доступу активуйте підписку за $2/місяць.\n\n"
-                "Використайте команду /payment для отримання інформації про оплату."
-            )
+            no_access_msg = get_text("no_access", lang) + "\n\n"
+            no_access_msg += get_text("trials_used", lang, used=access_info["remaining_trials"], max=2) + "\n"
+            no_access_msg += get_text("activate_subscription", lang) + "\n\n"
+            no_access_msg += get_text("cost_per_month", lang) + "\n"
+            no_access_msg += get_text("contact_admin", lang)
+            await message.answer(no_access_msg)
             return
         
         # Використовуємо Claude AI
-        analysis_result = food_analyzer.analyze_food_image(file_bytes.read())
+        analysis_result = food_analyzer.analyze_food_image(file_bytes.read(), lang)
         
         # Додаємо детальну діагностику
         logger.info(f"🔍 Аналіз фото для користувача {user_id}:")
@@ -514,32 +572,30 @@ async def handle_photo(message: Message, state: FSMContext):
             logger.warning(f"   Аналіз: {analysis_result}")
         
         # Формуємо коротку та гарну відповідь
-        response_text = f"🍽️ {nutrition_data['dish_name'] if nutrition_data['dish_name'] else 'Страва'}\n\n"
-        response_text += f"⚖️ Вага: {nutrition_data['dish_weight']:.0f} г\n"
-        response_text += f"🔥 Калорії: {nutrition_data['calories']:.0f} ккал\n"
-        response_text += f"🥩 Білки: {nutrition_data['protein']:.1f} г\n"
-        response_text += f"🧈 Жири: {nutrition_data['fat']:.1f} г\n"
-        response_text += f"🍞 Вуглеводи: {nutrition_data['carbs']:.1f} г\n\n"
+        dish_name = nutrition_data['dish_name'] if nutrition_data['dish_name'] else get_text("analysis_dish_default", lang)
+        response_text = f"🍽️ {dish_name}\n\n"
+        response_text += get_text("analysis_weight", lang, weight=nutrition_data['dish_weight']) + "\n"
+        response_text += get_text("analysis_calories", lang, calories=nutrition_data['calories']) + "\n"
+        response_text += get_text("analysis_protein", lang, protein=nutrition_data['protein']) + "\n"
+        response_text += get_text("analysis_fat", lang, fat=nutrition_data['fat']) + "\n"
+        response_text += get_text("analysis_carbs", lang, carbs=nutrition_data['carbs']) + "\n\n"
         
         # Додаємо попередження, якщо макронутрієнти нульові
         if nutrition_data.get("protein", 0) == 0 and nutrition_data.get("fat", 0) == 0 and nutrition_data.get("carbs", 0) == 0:
-            response_text += "⚠️ **Увага:** Макронутрієнти не розпізнані. Спробуйте фото кращої якості.\n\n"
+            response_text += get_text("analysis_warning_macros", lang)
         else:
             # Перевіряємо, чи дані були оцінені автоматично
             original_analysis = food_analyzer.parse_nutrition_data(analysis_result)
             if (original_analysis.get("protein", 0) == 0 and nutrition_data.get("protein", 0) > 0) or \
                (original_analysis.get("fat", 0) == 0 and nutrition_data.get("fat", 0) > 0) or \
                (original_analysis.get("carbs", 0) == 0 and nutrition_data.get("carbs", 0) > 0):
-                response_text += "ℹ️ **Примітка:** Деякі макронутрієнти оцінені автоматично на основі загальних знань про їжу.\n\n"
+                response_text += get_text("analysis_note_estimated", lang)
         
-        # Додаємо кнопку для води
-        response_text += "💧 Додати 250 мл води до статистики"
-        
-        # Створюємо клавіатуру з кнопкою для води
+        # Створюємо клавіатуру з кнопкою для води (без тексту)
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💧 +250 мл води", callback_data=f"add_water_{user_id}")]
+            [InlineKeyboardButton(text=get_text("btn_add_water", lang), callback_data=f"add_water_{user_id}")]
         ])
         
         await message.answer(response_text, reply_markup=keyboard)
@@ -566,18 +622,20 @@ async def handle_photo(message: Message, state: FSMContext):
             user_manager.use_claude_trial(user_id)
             remaining = access_info["remaining_trials"] - 1
             if remaining == 0:
-                await message.answer(
-                    "🎁 Остання безкоштовна спроба використана!\n\n"
-                    "💳 Для подальшого використання Claude AI активуйте підписку за $2/місяць.\n"
-                    "Використайте команду /payment для отримання інформації про оплату."
-                )
+                # Показуємо повідомлення про закінчення спроб з кнопкою оплати криптою
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=get_text("btn_pay_crypto", lang), callback_data="pay_crypto")]
+                ])
+                await message.answer(get_text("trial_used_last", lang), reply_markup=keyboard)
         
         # Видаляємо повідомлення про обробку
         await processing_msg.delete()
             
     except Exception as e:
         logger.error(f"Помилка при обробці фото: {e}")
-        await message.answer("❌ Помилка при аналізі зображення!\n\nСпробуйте:\n• Надіслати фото кращої якості\n• Переконатися, що їжа добре видна\n• Спробувати ще раз через кілька хвилин")
+        user_id = message.from_user.id
+        lang = user_manager.get_language(user_id)
+        await message.answer(get_text("error_analysis", lang))
 
 # ==================== АДМІНСЬКІ КОМАНДИ ====================
 
@@ -1227,12 +1285,94 @@ async def handle_other_messages(message: Message):
     """Обробник всіх інших повідомлень"""
     if message.text and not message.text.startswith('/'):
         user_id = message.from_user.id
-        await message.answer(
-            f"📸 Надішліть фото їжі для аналізу!\n\n"
-            f"🆔 Ваш ID: {user_id}\n\n"
-            f"Я можу аналізувати тільки зображення. "
-            f"Використайте команду /help для отримання додаткової інформації."
-        )
+        lang = user_manager.get_language(user_id)
+        
+        # Check if message is a keyboard button press
+        msg_text = message.text.strip()
+        
+        # Help button
+        if msg_text in [get_text("btn_help", "en"), get_text("btn_help", "ua"), get_text("btn_help", "ru")]:
+            await message.answer(get_text("help", lang))
+            return
+        
+        # About button
+        if msg_text in [get_text("btn_about", "en"), get_text("btn_about", "ua"), get_text("btn_about", "ru")]:
+            await message.answer(get_text("about", lang))
+            return
+        
+        # Status button
+        if msg_text in [get_text("btn_status", "en"), get_text("btn_status", "ua"), get_text("btn_status", "ru")]:
+            status_message = user_manager.get_subscription_status_message(user_id)
+            await message.answer(status_message)
+            return
+        
+        # Payment button - швидка оплата
+        if msg_text in [get_text("btn_payment", "en"), get_text("btn_payment", "ua"), get_text("btn_payment", "ru")]:
+            # Перевіряємо статус підписки
+            access_info = user_manager.can_use_claude(user_id)
+            
+            if access_info["can_use"] and access_info["reason"] == "subscription":
+                # Вже є активна підписка
+                status_msg = user_manager.get_subscription_status_message(user_id)
+                await message.answer(f"✅ {status_msg}\n\n💡 Підписка вже активна!")
+            else:
+                # Показуємо кнопку для оплати
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=get_text("btn_pay_crypto", lang), callback_data="pay_crypto")]
+                ])
+                
+                payment_text = get_text("payment_info", lang) + f"\n\n💳 Натисніть кнопку нижче для оплати:"
+                await message.answer(payment_text, reply_markup=keyboard)
+            return
+        
+        # Language button
+        if msg_text in [get_text("btn_language", "en"), get_text("btn_language", "ua"), get_text("btn_language", "ru")]:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+                    InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua"),
+                ],
+                [
+                    InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
+                ]
+            ])
+            await message.answer(get_text("select_language", lang), reply_markup=keyboard)
+            return
+        
+        # Stats button
+        if msg_text in [get_text("btn_stats", "en"), get_text("btn_stats", "ua"), get_text("btn_stats", "ru")]:
+            try:
+                daily_stats = subscription_db.get_user_daily_stats(user_id)
+                
+                if not daily_stats or daily_stats.get("dishes_count", 0) == 0:
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
+                    ])
+                    await message.answer(get_text("stats_empty", lang), reply_markup=keyboard)
+                else:
+                    stats_text = get_text("stats_header", lang)
+                    stats_text += get_text("stats_dishes", lang, count=daily_stats.get('dishes_count', 0)) + "\n"
+                    stats_text += get_text("stats_calories", lang, calories=daily_stats.get('total_calories', 0)) + "\n"
+                    stats_text += get_text("stats_protein", lang, protein=daily_stats.get('total_protein', 0)) + "\n"
+                    stats_text += get_text("stats_fat", lang, fat=daily_stats.get('total_fat', 0)) + "\n"
+                    stats_text += get_text("stats_carbs", lang, carbs=daily_stats.get('total_carbs', 0)) + "\n"
+                    stats_text += get_text("stats_water", lang, water=daily_stats.get('water_ml', 0)) + "\n"
+                    if daily_stats.get('water_ml', 0) < 2000:
+                        stats_text += get_text("water_recommendation_need_more", lang)
+                    else:
+                        stats_text += get_text("water_recommendation_achieved", lang)
+                    
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=get_text("btn_clear_stats", lang), callback_data=f"clear_stats_{user_id}")]
+                    ])
+                    await message.answer(stats_text, reply_markup=keyboard)
+            except Exception as e:
+                logger.error(f"Помилка при отриманні статистики для {user_id}: {e}")
+                await message.answer(get_text("stats_error", lang))
+            return
+        
+        # Default: ask for photo
+        await message.answer(get_text("send_photo", lang, user_id=user_id))
 
 
 async def cleanup_stats_scheduler():
@@ -1316,14 +1456,18 @@ async def main():
         # Підключаємо роутери
         dp.include_router(router)
         
+        # Додаємо роутер платежів
+        dp.include_router(payment_router)
+        
         # Запускаємо планувальник очищення статистики
         cleanup_task = asyncio.create_task(cleanup_stats_scheduler())
         
         # Запускаємо бота
         logger.info("🚀 Запуск FoodBot...")
         logger.info("🧹 Планувальник очищення статистики запущено (кожні 24 години)")
+        logger.info("💳 Платіжна система: показ USDT TRC20 гаманця")
         
-        # Запускаємо бота та планувальник одночасно
+        # Запускаємо бота та всі фонові задачі одночасно
         await asyncio.gather(
             dp.start_polling(bot),
             cleanup_task

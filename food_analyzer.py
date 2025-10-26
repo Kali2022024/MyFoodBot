@@ -2,6 +2,7 @@ import base64
 import io
 from anthropic import Anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from translations import get_text
 
 class FoodAnalyzer:
     """Клас для аналізу їжі за допомогою Claude AI"""
@@ -11,12 +12,13 @@ class FoodAnalyzer:
         self.client = Anthropic(api_key=ANTHROPIC_API_KEY)
         self.model = CLAUDE_MODEL
     
-    def analyze_food_image(self, image_bytes: bytes) -> str:
+    def analyze_food_image(self, image_bytes: bytes, language: str = "en") -> str:
         """
         Аналізує зображення їжі та повертає інформацію про калорії, білки та вуглеводи
         
         Args:
             image_bytes: Байти зображення
+            language: Мова для відповіді (en, ua, ru)
             
         Returns:
             str: Аналіз їжі з детальною інформацією
@@ -25,32 +27,8 @@ class FoodAnalyzer:
             # Конвертуємо зображення в base64
             image_base64 = base64.b64encode(image_bytes).decode('utf-8')
             
-            # Промпт для аналізу їжі
-            prompt = """
-            Проаналізуй це зображення їжі та надай точну інформацію у строго визначеному форматі:
-            
-            Назва страви: [конкретна назва]
-            Вага: [число] г
-            Калорії: [число] ккал
-            Білки: [число] г
-            Жири: [число] г
-            Вуглеводи: [число] г
-            
-            ВАЖЛИВО:
-            - Давай ТОЧНІ числові значення, не приблизні
-            - Якщо не можеш точно визначити, вказуй найбільш ймовірне значення
-            - Використовуй тільки числа та одиниці виміру (г, ккал)
-            - Не додавай зайвих слів або пояснень
-            - Відповідай українською мовою
-            
-            Приклад правильної відповіді:
-            Назва страви: Рисова страва з овочами та яйцем
-            Вага: 200 г
-            Калорії: 400 ккал
-            Білки: 12 г
-            Жири: 8 г
-            Вуглеводи: 65 г
-            """
+            # Промпт для аналізу їжі на відповідній мові
+            prompt = get_text("ai_analysis_prompt", language)
             
             # Відправляємо запит до Claude з зображенням
             message = self.client.messages.create(
@@ -280,27 +258,19 @@ class FoodAnalyzer:
             print(f"Помилка при валідації даних: {e}")
             pass
     
-    def get_health_tips(self, food_analysis: str) -> str:
+    def get_health_tips(self, food_analysis: str, language: str = "en") -> str:
         """
         Генерує корисні поради щодо здорового харчування на основі аналізу
         
         Args:
             food_analysis: Результат аналізу їжі
+            language: Мова для відповіді (en, ua, ru)
             
         Returns:
             str: Корисні поради
         """
         try:
-            prompt = f"""
-            На основі цього аналізу їжі:
-            
-            {food_analysis}
-            
-            Надай 3-5 корисних порад щодо здорового харчування, які стосуються цієї страви.
-            Поради мають бути практичними та корисними.
-            
-            Відповідай українською мовою у форматі списку.
-            """
+            prompt = get_text("ai_health_tips_prompt", language, food_analysis=food_analysis)
             
             message = self.client.messages.create(
                 model=self.model,

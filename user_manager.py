@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from subscription_db import subscription_db
+from translations import get_text
 
 class UserManager:
     """Менеджер користувачів з системою безкоштовних спроб та платним доступом"""
@@ -43,7 +44,8 @@ class UserManager:
                 "subscription_active": False,
                 "subscription_expires": None,
                 "total_claude_uses": 0,
-                "preferred_mode": "claude"
+                "preferred_mode": "claude",
+                "language": "en"  # Default language: English
             }
             self._save_users()
         
@@ -126,6 +128,19 @@ class UserManager:
         user["preferred_mode"] = mode
         self._save_users()
     
+    def get_language(self, user_id: int) -> str:
+        """Отримує мову користувача"""
+        user = self.get_user(user_id)
+        return user.get("language", "en")
+    
+    def set_language(self, user_id: int, language: str):
+        """Встановлює мову користувача"""
+        if language not in ["en", "ua", "ru"]:
+            language = "en"  # Default to English if invalid language
+        user = self.get_user(user_id)
+        user["language"] = language
+        self._save_users()
+    
     def get_payment_info(self) -> str:
         """Повертає інформацію про оплату"""
         return """
@@ -147,28 +162,29 @@ class UserManager:
         """Повертає повідомлення про статус підписки"""
         stats = self.get_user_stats(user_id)
         access_info = self.can_use_claude(user_id)
+        lang = self.get_language(user_id)
         
-        message = "🔐 Статус доступу до Claude AI:\n\n"
+        message = get_text("status_header", lang)
         
         if access_info["can_use"]:
             if access_info["reason"] == "subscription":
                 expires = access_info["subscription_expires"]
                 days_left = (expires - datetime.now()).days
-                message += f"✅ Активна підписка\n"
-                message += f"📅 Дійсна до: {expires.strftime('%d.%m.%Y')}\n"
-                message += f"⏰ Залишилось днів: {days_left}\n"
+                message += get_text("subscription_active", lang) + "\n"
+                message += get_text("subscription_expires", lang, date=expires.strftime('%d.%m.%Y')) + "\n"
+                message += get_text("days_left", lang, days=days_left) + "\n"
             else:
-                message += f"🎁 Безкоштовна спроба\n"
-                message += f"🔢 Залишилось спроб: {access_info['remaining_trials']}\n"
+                message += get_text("free_trial", lang) + "\n"
+                message += get_text("trials_remaining", lang, count=access_info['remaining_trials']) + "\n"
         else:
-            message += "❌ Немає доступу\n"
-            message += f"🎁 Використано безкоштовних спроб: {stats['free_trials_used']}/{stats['max_free_trials']}\n"
-            message += "💳 Для доступу активуйте підписку\n\n"
-            message += "💰 Вартість: $2 на місяць\n"
-            message += "📧 Зв'яжіться з адміністратором: @onopandrey"
+            message += get_text("no_access", lang) + "\n"
+            message += get_text("trials_used", lang, used=stats['free_trials_used'], max=stats['max_free_trials']) + "\n"
+            message += get_text("activate_subscription", lang) + "\n\n"
+            message += get_text("cost_per_month", lang) + "\n"
+            message += get_text("contact_admin", lang)
         
-        message += f"\n\n📊 Загальна статистика:\n"
-        message += f"• Використано Claude AI: {stats['total_claude_uses']} разів\n"
-        message += f"• Бажаний режим: {stats['preferred_mode'].title()}"
+        message += get_text("total_stats", lang) + "\n"
+        message += get_text("claude_uses", lang, count=stats['total_claude_uses']) + "\n"
+        message += get_text("preferred_mode", lang, mode=stats['preferred_mode'].title())
         
         return message
